@@ -4,14 +4,18 @@ import numpy as np
 # model: trained model
 # data:testing data, real data
 # start:from which point to predict
-def getPredictionAndRealData(model, data, start, window_size=3):
+def getPredictionAndPrevRealData(model, data, start, window_size=3):
     real, pred = [], []
-    real.append(data.iloc[start - window_size:start + 1, 3])
+    real.append(data.iloc[start - window_size:start + 1, 4])
     for_forecast = model.get_prediction(start=start, end=start + window_size, dynamic=True)
     for_forecast = for_forecast.predicted_mean
     pred.append(for_forecast[:])
     return real, pred
 
+def getRealData(data, start, window_size=3):
+    real=[]
+    real.append(data.iloc[start:start + window_size+1, 4])
+    return real
 
 # if forcast is going up and the 1st differential is also goind up, it's an uptrend,
 # and if previous is also uptrend, then this trend continues

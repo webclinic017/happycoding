@@ -1,6 +1,6 @@
 import numpy as np
 from keras.models import Sequential
-from keras.layers import Dense, LSTM, Dropout
+from keras.layers import Dense, LSTM, Dropout, GRU, RNN
 import keras
 from keras.callbacks import EarlyStopping
 import matplotlib.pyplot as plt
@@ -112,9 +112,9 @@ def differentialHelper(data):
 # first return is O/C/- for open close or not action needed
 # second return L/S for long or short
 def positionStrategy(currentTrend, inPositionTrend):
-    currentTrend=str(currentTrend)
-    inPositionTrend=str(inPositionTrend)
-    #print(f'current: {currentTrend} in position trend {inPositionTrend}')
+    currentTrend = str(currentTrend)
+    inPositionTrend = str(inPositionTrend)
+    # print(f'current: {currentTrend} in position trend {inPositionTrend}')
     if currentTrend.startswith('UP'):
         currentTrend = "UP"
     if currentTrend.startswith('DOWN'):
@@ -153,7 +153,7 @@ def trend_prediction_to_transaction(trend_prediction, test_data):
     for row in trend_prediction:
         date = test_data.iloc[row[0], 0]
         profit = 0
-        current_trend = str(row[1])
+        current_trend = str(row[2])
         lastest_position = transaction_list[-1]
         prev_strategy = lastest_position[3]
         action, buyOrShort = positionStrategy(current_trend, lastest_position[5])
@@ -177,7 +177,7 @@ def trend_prediction_to_transaction(trend_prediction, test_data):
             transaction_list.append([row[0], date, 'O', buyOrShort, 0, current_trend, test_data.iloc[row[0], -1]])
     return profit_cumulative, transaction_list
 
-
+#withe 200 days this model is best for TW pair
 def build_model(look_back, sd):
     model = Sequential()
     model.add(LSTM(64, input_shape=(1, look_back), activation='relu', return_sequences=True,
@@ -191,8 +191,52 @@ def build_model(look_back, sd):
     model.add(Dense(16, activation='relu', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
                     bias_initializer=keras.initializers.Constant(value=0.1)))
     model.add(Dropout(0.1, seed=sd))
-    model.add(Dense(1, activation='sigmoid', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    model.add(Dense(1, kernel_initializer=keras.initializers.RandomNormal(seed=sd),
                     bias_initializer=keras.initializers.Constant(value=0.1)))
+    return model
+
+
+def build_model_v2(look_back, sd):
+    model_inputs = keras.Input(shape=(1, look_back))
+
+    model_lstm_layer = LSTM(16, input_shape=(1, look_back), activation='relu', return_sequences=False,
+                            kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+                            bias_initializer=keras.initializers.Constant(value=0.1))(model_inputs)
+    # model_lstm_layer = LSTM(16, activation='tanh',
+    #                         kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    #                         bias_initializer=keras.initializers.Constant(value=0.1))(model_lstm_layer)
+    model_lstm_layer = Dropout(0.1, seed=sd)(model_lstm_layer)
+
+    model_nn_layer = tf.keras.layers.Flatten()(model_inputs)
+    model_nn_layer = Dense(4, activation='sigmoid', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+                           bias_initializer=keras.initializers.Constant(value=0.1))(model_nn_layer)
+
+    merged = keras.layers.concatenate([model_lstm_layer, model_nn_layer], axis=1)
+    merged = Dense(1, kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+                   bias_initializer=keras.initializers.Constant(value=0.1))(merged)
+    model = keras.Model(inputs=[model_inputs], outputs=merged)
+    return model
+
+
+def build_model_v2_backup(look_back, sd):
+    model_inputs = keras.Input(shape=(1, look_back))
+
+    model_lstm_layer = LSTM(32, input_shape=(1, look_back), activation='relu', return_sequences=False,
+                            kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+                            bias_initializer=keras.initializers.Constant(value=0.1))(model_inputs)
+    # model_lstm_layer = LSTM(16, activation='tanh',
+    #                         kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    #                         bias_initializer=keras.initializers.Constant(value=0.1))(model_lstm_layer)
+    model_lstm_layer = Dropout(0.1, seed=sd)(model_lstm_layer)
+
+    model_nn_layer = tf.keras.layers.Flatten()(model_inputs)
+    model_nn_layer = Dense(1, activation='sigmoid', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+                           bias_initializer=keras.initializers.Constant(value=0.1))(model_nn_layer)
+
+    merged = keras.layers.concatenate([model_lstm_layer, model_nn_layer], axis=1)
+    merged = Dense(1, kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+                   bias_initializer=keras.initializers.Constant(value=0.1))(merged)
+    model = keras.Model(inputs=[model_inputs], outputs=merged)
     return model
 
 
@@ -204,11 +248,9 @@ def model_selection(test_data, START=0, END=100, look_back=7, SPLIT=0.2, sd=123,
                     select_col='realcombo'):
     dataset = test_data.loc[START:END, select_col].to_numpy()
     dataset = np.nan_to_num(dataset)
-    # subset_mean = dataset.mean()
-    # subset_std = dataset.std()
-    # dataset = (dataset - subset_mean) / subset_std
-    dataset = np.reshape(dataset, (dataset.shape[0], 1, 1))
 
+    dataset = np.reshape(dataset, (dataset.shape[0], 1, 1))
+    print(dataset.shape)
     x, y = create_dataset(dataset[:], look_back)
     x = np.reshape(x, (x.shape[0], 1, x.shape[1]))
     y = np.reshape(y, (y.shape[0], y.shape[1]))
@@ -216,32 +258,35 @@ def model_selection(test_data, START=0, END=100, look_back=7, SPLIT=0.2, sd=123,
     size = len(x)
     train_size = int(size * (1 - SPLIT))
     test_size = size - train_size
-    print(test_size)
     x_train, x_test = x[0:train_size, :, :], x[train_size:, :, :]
     y_train, y_test = y[0:train_size], y[train_size:]
-    print(f"train size {x_train.shape}")
-    print(f"test size {x_test.shape}")
+    print(f"train size LSTM {x_train.shape}")
+    print(f"test size LSTM {x_test.shape}")
 
-    model = Sequential()
-    model.add(LSTM(64, input_shape=(1, look_back), activation='relu', return_sequences=True,
-                   kernel_initializer=keras.initializers.RandomNormal(seed=sd),
-                   bias_initializer=keras.initializers.Constant(value=0.1)))
-    # model.add(LSTM(128,activation='tanh',return_sequences=True))
-    model.add(LSTM(16, activation='tanh',
-                   kernel_initializer=keras.initializers.RandomNormal(seed=sd),
-                   bias_initializer=keras.initializers.Constant(value=0.1)))
-    # model.add(Dropout(0.1))
-    model.add(Dense(16, activation='relu', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
-                    bias_initializer=keras.initializers.Constant(value=0.1)))
-    model.add(Dropout(0.1, seed=sd))
-    model.add(Dense(1, activation='sigmoid', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
-                    bias_initializer=keras.initializers.Constant(value=0.1)))
+    model = build_model_v2(look_back, sd)
+    # model_inputs = keras.Input(shape=(1, look_back))
+    # model_lstm_layer = LSTM(64, input_shape=(1, look_back), activation='relu', return_sequences=True,
+    #                         kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    #                         bias_initializer=keras.initializers.Constant(value=0.1))(model_inputs)
+    # model_lstm_layer = LSTM(16, activation='tanh',
+    #                         kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    #                         bias_initializer=keras.initializers.Constant(value=0.1))(model_lstm_layer)
+    # model_lstm_layer = Dropout(0.1, seed=sd)(model_lstm_layer)
+    #
+    # model_nn_layer = tf.keras.layers.Flatten()(model_inputs)
+    # model_nn_layer = Dense(1, activation='sigmoid', kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    #                        bias_initializer=keras.initializers.Constant(value=0.1))(model_nn_layer)
+    #
+    # merged = keras.layers.concatenate([model_lstm_layer, model_nn_layer], axis=1)
+    # merged = Dense(1,  kernel_initializer=keras.initializers.RandomNormal(seed=sd),
+    #                bias_initializer=keras.initializers.Constant(value=0.1))(merged)
+    # model = keras.Model(inputs=[model_inputs], outputs=merged)
     # model.summary()
     # simple early stopping
     es = EarlyStopping(monitor='val_loss', patience=3, verbose=1)
     model.compile(optimizer='adam', loss=tf.keras.losses.MeanSquaredError(),
                   metrics=[tf.keras.metrics.MeanSquaredError()])
-    model.fit(x_train, y_train, epochs=150, validation_data=(x_test, y_test), batch_size=1, callbacks=[es], verbose=1)
+    model.fit(x_train, y_train, epochs=100, validation_data=(x_test, y_test), batch_size=1, callbacks=[es], verbose=1)
 
     y_predict = model.predict(x_test)
     score_test = mape_score(y_test, y_predict)
@@ -285,13 +330,14 @@ def model_selection(test_data, START=0, END=100, look_back=7, SPLIT=0.2, sd=123,
     plt.title(select_col)
     plt.grid()
     plt.show()
+    return future
 
 
 def build_model_and_predict_and_show(test_data, START, END, look_back=7, future_size=10, select_col='realcombo',
                                      seed=123):
     dataset = test_data.loc[START:END, select_col].to_numpy()
     dataset = np.nan_to_num(dataset)
-    print(dataset.shape)  ##NOTE: END IS INCLUDED
+    # print(dataset.shape)  ##NOTE: END IS INCLUDED
     dataset = np.reshape(dataset, (dataset.shape[0], 1, 1))
     x, y = create_dataset(dataset[:], look_back)
     x = np.reshape(x, (x.shape[0], 1, x.shape[1]))
@@ -299,7 +345,7 @@ def build_model_and_predict_and_show(test_data, START, END, look_back=7, future_
 
     size = len(x)
 
-    model = build_model(look_back, seed)
+    model = build_model_v2(look_back, seed)
     # model.summary()
     # simple early stopping
     es = EarlyStopping(monitor='loss', patience=5, verbose=1)
@@ -352,7 +398,7 @@ def build_model_and_predict(test_data, START, END, look_back=7, future_size=10, 
 
     size = len(x)
 
-    model = build_model(look_back, seed)
+    model = build_model_v2(look_back, seed)
     # model.summary()
     # simple early stopping
     es = EarlyStopping(monitor='loss', patience=5, verbose=0)
